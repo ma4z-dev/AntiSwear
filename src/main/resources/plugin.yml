@@ -1,0 +1,16 @@
+name: AntiSwear
+main: com.ma4z.antiswear.AntiSwearPlugin
+version: 1.0.0
+api-version: 1.13
+author: ma4z-dev
+commands:
+  antiswear:
+    description: AntiSwear admin command
+    usage: /antiswear reload
+permissions:
+  antiswear.bypass:
+    description: Players with this permission bypass the filter
+    default: false
+  antiswear.admin:
+    description: Allows reloading the plugin config
+    default: op

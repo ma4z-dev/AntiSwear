@@ -1,0 +1,8 @@
+Blocked_Words: 
+  - fuck
+  - shit
+  - bullshit
+  - asshole
+Blocked_Message: "&cWatch your language! Your message was blocked."
+Notify_Staff: true
+Staff_Notify_Permission: "antiswear.admin"
