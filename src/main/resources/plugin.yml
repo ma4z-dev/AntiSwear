@@ -1,7 +1,7 @@
 name: AntiSwear
 main: com.ma4z.antiswear.AntiSwearPlugin
 version: 1.0.0
-api-version: 1.13
+api-version: 1.21
 author: ma4z-dev
 commands:
   antiswear:
