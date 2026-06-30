@@ -1,25 +1,30 @@
 package com.ma4z.antiswear;
 
+import io.papermc.paper.event.player.AsyncChatEvent;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.AsyncPlayerChatEvent;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.text.Normalizer;
-import java.util.*;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class AntiSwearPlugin extends JavaPlugin implements Listener {
 
     private List<String> blockedWords;
-    private String blockedMessage;
+    private Component blockedMessage;
     private boolean notifyStaff;
     private String staffPerm;
 
@@ -28,7 +33,7 @@ public class AntiSwearPlugin extends JavaPlugin implements Listener {
         saveDefaultConfig();
         loadConfigValues();
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("AntiSwear enabled.");
+        getLogger().info("AntiSwear v" + getDescription().getVersion() + " enabled!");
     }
 
     @Override
@@ -38,93 +43,124 @@ public class AntiSwearPlugin extends JavaPlugin implements Listener {
 
     private void loadConfigValues() {
         FileConfiguration cfg = getConfig();
-        this.blockedWords = cfg.getStringList("Blocked_Words").stream()
+
+        blockedWords = cfg.getStringList("Blocked_Words").stream()
                 .filter(s -> s != null && !s.trim().isEmpty())
                 .map(s -> s.toLowerCase(Locale.ROOT))
                 .collect(Collectors.toList());
-        this.blockedMessage = ChatColor.translateAlternateColorCodes('&',
-                cfg.getString("Blocked_Message", "&cWatch your language! Your message was blocked."));
-        this.notifyStaff = cfg.getBoolean("Notify_Staff", true);
-        this.staffPerm = cfg.getString("Staff_Notify_Permission", "antiswear.admin");
+
+        // Uses MiniMessage so users can use modern tags like <red> or legacy ones like &c automatically
+        String rawMessage = cfg.getString("Blocked_Message", "<red>Watch your language! Your message was filtered.");
+        blockedMessage = MiniMessage.miniMessage().deserialize(rawMessage);
+
+        notifyStaff = cfg.getBoolean("Notify_Staff", true);
+        staffPerm = cfg.getString("Staff_Notify_Permission", "antiswear.admin");
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onChat(AsyncPlayerChatEvent event) {
-        Player player = event.getPlayer();
-        if (player.hasPermission("antiswear.bypass")) return;
+    public void onChat(AsyncChatEvent event) {
 
-        String message = event.getMessage();
-        if (containsBlockedWord(message)) {
-            event.setCancelled(true);
+        Player player = event.getPlayer();
+
+        if (player.hasPermission("antiswear.bypass")) {
+            return;
+        }
+
+        String original = PlainTextComponentSerializer.plainText()
+                .serialize(event.message());
+
+        String filtered = filterMessage(original);
+
+        if (!original.equals(filtered)) {
+
+            event.message(Component.text(filtered));
+
             player.sendMessage(blockedMessage);
 
-            if (notifyStaff && staffPerm != null && !staffPerm.isEmpty()) {
-                String alert = ChatColor.RED + "[AntiSwear] " + ChatColor.GRAY + player.getName()
-                        + " tried to send: " + ChatColor.WHITE + message;
-                for (Player p : Bukkit.getOnlinePlayers()) {
-                    if (p.hasPermission(staffPerm)) p.sendMessage(alert);
+            if (notifyStaff) {
+                Component alert = Component.text("[AntiSwear] ", NamedTextColor.RED)
+                        .append(Component.text(player.getName(), NamedTextColor.GRAY))
+                        .append(Component.text(" said: ", NamedTextColor.GRAY))
+                        .append(Component.text(original, NamedTextColor.WHITE));
+
+                for (Player online : Bukkit.getOnlinePlayers()) {
+                    if (online.hasPermission(staffPerm)) {
+                        online.sendMessage(alert);
+                    }
                 }
             }
         }
     }
 
-    private boolean containsBlockedWord(String originalMessage) {
-        if (blockedWords.isEmpty()) return false;
-        String normalized = normalize(originalMessage);
+    private String filterMessage(String message) {
+
+        String result = message;
+
         for (String banned : blockedWords) {
-            if (banned.isEmpty()) continue;
-            if (normalized.contains(simpleNormalize(banned))) {
-                return true;
+
+            Pattern pattern = Pattern.compile(
+                    "\\b" + Pattern.quote(banned) + "\\b",
+                    Pattern.CASE_INSENSITIVE
+            );
+
+            Matcher matcher = pattern.matcher(result);
+
+            StringBuilder sb = new StringBuilder();
+
+            while (matcher.find()) {
+                matcher.appendReplacement(sb, Matcher.quoteReplacement(
+                        censorWord(matcher.group())
+                ));
             }
+
+            matcher.appendTail(sb);
+            result = sb.toString();
         }
-        return false;
-    }
-    private String normalize(String msg) {
-        String s = msg;
-        s = Normalizer.normalize(s, Normalizer.Form.NFD)
-                .replaceAll("\\p{M}+", "");
 
-        s = s.toLowerCase(Locale.ROOT);
-        s = s
-            .replace('0', 'o')
-            .replace('1', 'i')
-            .replace('3', 'e')
-            .replace('4', 'a')
-            .replace('5', 's')
-            .replace('7', 't')
-            .replace('@', 'a')
-            .replace('$', 's')
-            .replace('!', 'i')
-            .replace('|', 'i');
-
-        s = s.replaceAll("[^a-z]", "");
-
-        s = s.replaceAll("(.)\\1{2,}", "$1$1"); 
-
-        return s;
+        return result;
     }
 
-    private String simpleNormalize(String s) {
-        return s == null ? "" : s.toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z]", "");
+    private String censorWord(String word) {
+
+        if (word.length() <= 2) {
+            return "**";
+        }
+
+        StringBuilder sb = new StringBuilder();
+
+        sb.append(word.charAt(0));
+
+        for (int i = 1; i < word.length() - 1; i++) {
+            sb.append('*');
+        }
+
+        sb.append(word.charAt(word.length() - 1));
+
+        return sb.toString();
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!"antiswear".equalsIgnoreCase(command.getName())) return false;
+
+        if (!command.getName().equalsIgnoreCase("antiswear")) {
+            return false;
+        }
 
         if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
+
             if (!sender.hasPermission("antiswear.admin")) {
-                sender.sendMessage(ChatColor.RED + "You don't have permission.");
+                sender.sendMessage(Component.text("You don't have permission.", NamedTextColor.RED));
                 return true;
             }
+
             reloadConfig();
             loadConfigValues();
-            sender.sendMessage(ChatColor.GREEN + "AntiSwear config reloaded.");
+
+            sender.sendMessage(Component.text("AntiSwear config reloaded.", NamedTextColor.GREEN));
             return true;
         }
 
-        sender.sendMessage(ChatColor.YELLOW + "Usage: /antiswear reload");
+        sender.sendMessage(Component.text("Usage: /antiswear reload", NamedTextColor.YELLOW));
         return true;
     }
 }
